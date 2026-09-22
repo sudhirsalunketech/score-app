@@ -33,11 +33,11 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayDisconnect {
     if (!url) return;
     void import('@socket.io/redis-adapter')
       .then(async ({ createAdapter }) => {
-        const Redis = (await import('ioredis')).default;
-        const pub = new Redis(url);
+        const RedisCtor = (await import('ioredis')).default as unknown as new (url: string) => import('ioredis').default;
+        const pub = new RedisCtor(url);
         const sub = pub.duplicate();
-        pub.on('error', (err) => this.log.warn(`Redis pub client error: ${String(err)}`));
-        sub.on('error', (err) => this.log.warn(`Redis sub client error: ${String(err)}`));
+        pub.on('error', (err: unknown) => this.log.warn(`Redis pub client error: ${String(err)}`));
+        sub.on('error', (err: unknown) => this.log.warn(`Redis sub client error: ${String(err)}`));
         server.adapter(createAdapter(pub, sub));
         this.log.log('Socket.IO Redis adapter enabled');
       })
