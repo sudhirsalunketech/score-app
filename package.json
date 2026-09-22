@@ -1,0 +1,34 @@
+{
+  "name": "crickscore-new",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @crickscore/api --filter @crickscore/web dev",
+    "build": "pnpm --filter @crickscore/shared build && pnpm --filter @crickscore/api build && pnpm --filter @crickscore/web build",
+    "test": "pnpm --filter @crickscore/shared test && pnpm --filter @crickscore/api test",
+    "test:e2e": "pnpm --filter @crickscore/web test:e2e",
+    "typecheck": "pnpm -r typecheck",
+    "db:up": "docker compose up -d postgres redis",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:seed-beta": "tsx prisma/seed-beta.ts",
+    "db:reset": "prisma migrate reset --force --schema prisma/schema.prisma"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma",
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@crickscore/shared": "workspace:*",
+    "@prisma/client": "^6.2.1",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "prisma": "^6.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

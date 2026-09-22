@@ -1,0 +1,1 @@
+ALTER TABLE "PlayerStatistic" ADD COLUMN "hatTricks" INTEGER NOT NULL DEFAULT 0;

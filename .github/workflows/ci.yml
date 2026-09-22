@@ -1,0 +1,41 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crickscore
+          POSTGRES_PASSWORD: crickscore
+          POSTGRES_DB: crickscore
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U crickscore"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://crickscore:crickscore@localhost:5435/crickscore?schema=public
+      JWT_ACCESS_SECRET: ci-access-secret-min-32-characters-long
+      JWT_REFRESH_SECRET: ci-refresh-secret-min-32-characters-long
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm db:generate
+      - run: pnpm --filter @crickscore/shared test
+      - run: pnpm --filter @crickscore/api test
+      - run: pnpm --filter @crickscore/shared build
+      - run: pnpm --filter @crickscore/web typecheck

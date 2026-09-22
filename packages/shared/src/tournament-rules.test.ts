@@ -1,0 +1,637 @@
+import { describe, expect, it } from 'vitest';
+import {
+  computeBoundaryStreakSequences,
+  computeHattrickSequences,
+  hatTrickBowlerIds,
+  DEFAULT_RULE_AFFECTS,
+  evaluateInningsRules,
+  isAutoAppliedRule,
+  makeRule,
+  parseRuleSnapshot,
+  previewTournamentRule,
+  ruleSpecificity,
+  rulesAffect,
+  sortRules,
+  type RuleSetSnapshot,
+} from './tournament-rules';
+import { computeMatchResult } from './match-result';
+
+const ball = (
+  over: number,
+  n: number,
+  runs: number,
+  extra?: { isWicket?: boolean; sequence?: number; bowlerId?: string; extraType?: string },
+) => ({
+  sequence: extra?.sequence ?? over * 10 + n,
+  overNumber: over,
+  ballInOver: n,
+  actualRuns: runs,
+  isWicket: extra?.isWicket,
+  bowlerId: extra?.bowlerId,
+  extraType: extra?.extraType,
+});
+
+function set(rules: ReturnType<typeof makeRule>[], version = 1): RuleSetSnapshot {
+  return { enabled: true, version, rules };
+}
+
+describe('rule priority chain', () => {
+  it('ranks TOURNAMENT < MATCH < INNINGS < OVER < BALL', () => {
+    const tournament = makeRule({ id: 't', name: 'tournament', action: 'ADD_RUNS', scope: 'TOURNAMENT' });
+    const match = makeRule({ id: 'm', name: 'match', action: 'ADD_RUNS', scope: 'MATCH' });
+    const innings = makeRule({ id: 'i', name: 'innings', action: 'ADD_RUNS', scope: 'INNINGS' });
+    const over = makeRule({ id: 'o', name: 'over', action: 'ADD_RUNS', scope: 'OVER' });
+    const ballScoped = makeRule({ id: 'b', name: 'ball', action: 'ADD_RUNS', scope: 'BALL' });
+    expect(ruleSpecificity(tournament)).toBeLessThan(ruleSpecificity(match));
+    expect(ruleSpecificity(match)).toBeLessThan(ruleSpecificity(innings));
+    expect(ruleSpecificity(innings)).toBeLessThan(ruleSpecificity(over));
+    expect(ruleSpecificity(over)).toBeLessThan(ruleSpecificity(ballScoped));
+
+    const ordered = sortRules([ballScoped, tournament, over, innings, match]).map((r) => r.id);
+    expect(ordered).toEqual(['t', 'm', 'i', 'o', 'b']);
+  });
+});
+
+describe('hattrick detection (computeHattrickSequences)', () => {
+  // Hattrick bonuses/penalties are auto-applied as real deliveries by the scoring
+  // engine (see apps/api/src/scoring/scoring.service.ts), not by the overlay evaluator
+  // below — these tests cover the shared detection logic both paths rely on.
+
+  it('flags the third of three consecutive legal wickets by the same bowler', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    const hits = computeHattrickSequences(balls);
+    expect(hits.has(balls[0]!.sequence)).toBe(false);
+    expect(hits.has(balls[1]!.sequence)).toBe(false);
+    expect(hits.has(balls[2]!.sequence)).toBe(true);
+  });
+
+  it('does not fire for two wickets only', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    expect(computeHattrickSequences(balls).size).toBe(0);
+  });
+
+  it('resets the streak on a non-wicket legal delivery', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 1), // legal, no wicket -> breaks the streak
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 4, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    expect(computeHattrickSequences(balls).size).toBe(0);
+  });
+
+  it('resets the streak when a different bowler takes the next wicket', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(2, 1, 0, { isWicket: true, bowlerId: 'bowler-b' }),
+    ];
+    expect(computeHattrickSequences(balls).size).toBe(0);
+  });
+
+  it('a wide between two wickets does not break the streak (not an eligible delivery)', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 1, { extraType: 'WIDE' }),
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 4, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    expect(computeHattrickSequences(balls).has(balls[3]!.sequence)).toBe(true);
+  });
+
+  it('a no-ball between two wickets does not break the streak (not an eligible delivery)', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 1, { extraType: 'NO_BALL' }),
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 4, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    expect(computeHattrickSequences(balls).has(balls[3]!.sequence)).toBe(true);
+  });
+
+  it('a hattrick can span an over boundary when the same bowler takes both wickets', () => {
+    const balls = [
+      ball(1, 5, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 6, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(3, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    expect(computeHattrickSequences(balls).has(balls[2]!.sequence)).toBe(true);
+  });
+
+  it('is never applied by the overlay evaluator, even when an enabled HATTRICK rule exists', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'ht',
+        name: 'Hattrick Bonus',
+        category: 'WICKET_RULE',
+        scope: 'TOURNAMENT',
+        condition: 'HATTRICK',
+        action: 'WICKET_BONUS',
+        actionConfig: { runs: 3 },
+      }),
+    ]);
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    const evaluation = evaluateInningsRules(snapshot, balls);
+    expect(evaluation.balls.every((b) => b.bonusRuns === 0)).toBe(true);
+  });
+});
+
+describe('hatTrickBowlerIds', () => {
+  it('credits the bowler once per completed hattrick', () => {
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+    ];
+    expect(hatTrickBowlerIds(balls)).toEqual(['bowler-a']);
+  });
+
+  it('returns nothing when no hattrick occurred', () => {
+    const balls = [ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }), ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' })];
+    expect(hatTrickBowlerIds(balls)).toEqual([]);
+  });
+
+  it('does not credit a hattrick that was undone (excluded from the ball log passed in)', () => {
+    // The caller is responsible for filtering out isUndone balls before calling this — simulate
+    // that by only passing the surviving balls after the third wicket was undone.
+    const balls = [ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }), ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' })];
+    expect(hatTrickBowlerIds(balls)).toEqual([]);
+  });
+
+  it('counts a longer streak (4+ consecutive wickets) only once, matching the auto-inserted-bonus reset', () => {
+    // The real ball log has a non-wicket PENALTY bonus ball inserted right after the 3rd wicket,
+    // which resets the streak — see scoring.service.ts. A 4th wicket right after starts a fresh count.
+    const balls = [
+      ball(1, 1, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 2, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 3, 0, { isWicket: true, bowlerId: 'bowler-a' }),
+      ball(1, 4, 5, { extraType: 'PENALTY', sequence: 4 }), // auto-inserted Hattrick Bonus ball
+      ball(1, 5, 0, { isWicket: true, bowlerId: 'bowler-a', sequence: 5 }),
+    ];
+    expect(hatTrickBowlerIds(balls)).toEqual(['bowler-a']);
+  });
+});
+
+describe('BOUNDARY + ADD_RUNS (generic, no longer a dedicated preset)', () => {
+  it('a custom BOUNDARY + ADD_RUNS rule is applied by the generic overlay evaluator, not the scoring engine', () => {
+    // The dedicated "Boundary Bonus" preset was removed; a BOUNDARY+ADD_RUNS rule built via the
+    // Advanced Rules builder is now an ordinary condition+action combo handled by the overlay only.
+    const snapshot = set([
+      makeRule({
+        id: 'bb',
+        name: 'Custom boundary points',
+        category: 'RUN_RULE',
+        scope: 'TOURNAMENT',
+        condition: 'BOUNDARY',
+        action: 'ADD_RUNS',
+        actionConfig: { runs: 2 },
+      }),
+    ]);
+    const balls = [ball(1, 1, 4), ball(1, 2, 6)];
+    const evaluation = evaluateInningsRules(snapshot, balls);
+    expect(evaluation.balls.every((b) => b.bonusRuns === 2)).toBe(true);
+  });
+});
+
+describe('boundary streak detection (computeBoundaryStreakSequences)', () => {
+  it('flags the third of three consecutive boundary balls', () => {
+    const balls = [ball(1, 1, 4), ball(1, 2, 6), ball(1, 3, 4)];
+    const hits = computeBoundaryStreakSequences(balls);
+    expect(hits.has(balls[0]!.sequence)).toBe(false);
+    expect(hits.has(balls[1]!.sequence)).toBe(false);
+    expect(hits.has(balls[2]!.sequence)).toBe(true);
+  });
+
+  it('does not fire for two boundaries only', () => {
+    const balls = [ball(1, 1, 4), ball(1, 2, 6)];
+    expect(computeBoundaryStreakSequences(balls).size).toBe(0);
+  });
+
+  it('resets the streak on a non-boundary legal delivery', () => {
+    const balls = [ball(1, 1, 4), ball(1, 2, 1), ball(1, 3, 6), ball(1, 4, 4)];
+    expect(computeBoundaryStreakSequences(balls).size).toBe(0);
+  });
+
+  it('resets the streak on a wicket, even off zero runs', () => {
+    const balls = [ball(1, 1, 4), ball(1, 2, 6), ball(1, 3, 0, { isWicket: true }), ball(1, 4, 4), ball(1, 5, 4)];
+    expect(computeBoundaryStreakSequences(balls).size).toBe(0);
+  });
+
+  it('a wide or no-ball between two boundaries does not break the streak', () => {
+    const balls = [ball(1, 1, 4), ball(1, 2, 1, { extraType: 'WIDE' }), ball(1, 3, 6), ball(1, 4, 4)];
+    const hits = computeBoundaryStreakSequences(balls);
+    expect(hits.has(balls[3]!.sequence)).toBe(true);
+  });
+
+  it('does not count a boundary scored off a no-ball (extraType NO_BALL, not NONE)', () => {
+    const balls = [ball(1, 1, 4), ball(1, 2, 4, { extraType: 'NO_BALL' }), ball(1, 3, 4), ball(1, 4, 4)];
+    // ball 2 is skipped (a no-ball), so only balls 1, 3, 4 count toward the streak -> the 4th ball completes it.
+    const hits = computeBoundaryStreakSequences(balls);
+    expect(hits.has(balls[3]!.sequence)).toBe(true);
+    expect(hits.size).toBe(1);
+  });
+
+  it('does not span an over boundary — the streak must complete within a single over', () => {
+    const balls = [ball(1, 5, 4), ball(1, 6, 6), ball(2, 1, 4)];
+    expect(computeBoundaryStreakSequences(balls).size).toBe(0);
+  });
+
+  it('a full 3-boundary streak within the same over still fires', () => {
+    const balls = [ball(2, 1, 4), ball(2, 2, 6), ball(2, 3, 4)];
+    const hits = computeBoundaryStreakSequences(balls);
+    expect(hits.has(balls[2]!.sequence)).toBe(true);
+  });
+
+  it('a boundary in a new over restarts the streak count rather than carrying it over', () => {
+    const balls = [ball(1, 5, 4), ball(1, 6, 6), ball(2, 1, 4), ball(2, 2, 6), ball(2, 3, 4)];
+    const hits = computeBoundaryStreakSequences(balls);
+    expect(hits.size).toBe(1);
+    expect(hits.has(balls[4]!.sequence)).toBe(true);
+  });
+});
+
+describe('isAutoAppliedRule', () => {
+  it('flags HATTRICK, BOUNDARY_STREAK, and SIX+ADD_RUNS rules', () => {
+    expect(isAutoAppliedRule({ condition: 'HATTRICK', action: 'WICKET_BONUS' })).toBe(true);
+    expect(isAutoAppliedRule({ condition: 'BOUNDARY_STREAK', action: 'ADD_RUNS' })).toBe(true);
+    expect(isAutoAppliedRule({ condition: 'SIX', action: 'ADD_RUNS' })).toBe(true);
+  });
+
+  it('does not flag other rule shapes, including any BOUNDARY action (the Boundary Bonus preset was removed)', () => {
+    expect(isAutoAppliedRule({ condition: 'BOUNDARY', action: 'ADD_RUNS' })).toBe(false);
+    expect(isAutoAppliedRule({ condition: 'BOUNDARY', action: 'MULTIPLY_RUNS' })).toBe(false);
+    expect(isAutoAppliedRule({ condition: 'SIX', action: 'MULTIPLY_RUNS' })).toBe(false);
+    expect(isAutoAppliedRule({ condition: 'ALWAYS', action: 'ADD_PENALTY' })).toBe(false);
+    expect(isAutoAppliedRule({ condition: 'WICKET', action: 'WICKET_BONUS' })).toBe(false);
+  });
+});
+
+describe('tournament rule engine', () => {
+  it('sanitizes snapshotted MVP config without changing counted totals', () => {
+    const parsed = parseRuleSnapshot({
+      enabled: false,
+      version: 2,
+      rules: [],
+      mvp: { bowling: { pointsPerWicket: 99 } },
+    });
+    expect(parsed?.mvp?.bowling.pointsPerWicket).toBe(20);
+    expect(evaluateInningsRules(parsed, [ball(1, 1, 4)]).countedTotal).toBe(4);
+  });
+
+  it('leaves scoring unchanged when rules are disabled', () => {
+    const balls = [ball(3, 1, 4)];
+    expect(evaluateInningsRules(null, balls).countedTotal).toBe(4);
+    expect(evaluateInningsRules({ enabled: false, version: 1, rules: [] }, balls).countedTotal).toBe(4);
+    expect(
+      evaluateInningsRules(
+        set([makeRule({ id: 'x', name: '2x', action: 'MULTIPLY_RUNS', actionConfig: { multiplier: 2 }, condition: 'OVER_EQUALS', conditionConfig: { over: 3 } })]),
+        balls,
+      ).countedTotal,
+    ).toBe(8);
+  });
+
+  it('doubles runs in a configured over', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'o3',
+        name: 'Over 3 double runs',
+        category: 'OVER_RULE',
+        scope: 'OVER',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+      }),
+    ]);
+    const result = evaluateInningsRules(snapshot, [ball(3, 1, 4), ball(4, 1, 4)]);
+    expect(result.balls.find((b) => b.overNumber === 3)?.countedRuns).toBe(8);
+    expect(result.balls.find((b) => b.overNumber === 4)?.countedRuns).toBe(4);
+    expect(result.actualTotal).toBe(8);
+    expect(result.countedTotal).toBe(12);
+  });
+
+  it('triples runs', () => {
+    const snapshot = set([
+      makeRule({
+        id: 't',
+        name: '3x',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 1 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 3 },
+      }),
+    ]);
+    expect(evaluateInningsRules(snapshot, [ball(1, 1, 2)]).countedTotal).toBe(6);
+  });
+
+  it('ignores runs for a specific ball', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'b',
+        name: 'Ball 5 does not count',
+        category: 'BALL_RULE',
+        scope: 'BALL',
+        condition: 'BALL_EQUALS',
+        conditionConfig: { over: 2, ball: 5 },
+        action: 'IGNORE_RUNS',
+      }),
+    ]);
+    const result = evaluateInningsRules(snapshot, [ball(2, 5, 4), ball(2, 6, 4)]);
+    expect(result.balls[0]).toMatchObject({ originalRuns: 4, countedRuns: 0 });
+    expect(result.balls[1]?.countedRuns).toBe(4);
+  });
+
+  it('adds bonus runs and subtracts penalties', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'bonus',
+        name: '+3 bonus',
+        scope: 'BALL',
+        condition: 'BALL_EQUALS',
+        conditionConfig: { over: 1, ball: 1 },
+        action: 'ADD_RUNS',
+        actionConfig: { runs: 3 },
+      }),
+      makeRule({
+        id: 'pen',
+        name: '-2 penalty',
+        category: 'PENALTY_RULE',
+        scope: 'BALL',
+        condition: 'BALL_EQUALS',
+        conditionConfig: { over: 1, ball: 2 },
+        action: 'SUBTRACT_RUNS',
+        actionConfig: { runs: 2 },
+      }),
+    ]);
+    const result = evaluateInningsRules(snapshot, [ball(1, 1, 2), ball(1, 2, 4)]);
+    expect(result.balls[0]?.countedRuns).toBe(5);
+    expect(result.balls[1]?.countedRuns).toBe(2);
+  });
+
+  it('applies wicket penalty and bonus', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'wp',
+        name: 'Wicket penalty',
+        category: 'WICKET_RULE',
+        scope: 'TOURNAMENT',
+        condition: 'WICKET',
+        action: 'WICKET_PENALTY',
+        actionConfig: { runs: 5 },
+      }),
+    ]);
+    const before = [ball(1, 1, 50)];
+    const withWicket = [...before, ball(1, 2, 0, { isWicket: true })];
+    expect(evaluateInningsRules(snapshot, withWicket).countedTotal).toBe(45);
+    const bonus = set([
+      makeRule({
+        id: 'wb',
+        name: 'Wicket bonus',
+        category: 'WICKET_RULE',
+        condition: 'WICKET',
+        action: 'WICKET_BONUS',
+        actionConfig: { runs: 2 },
+      }),
+    ]);
+    expect(evaluateInningsRules(bonus, [ball(1, 1, 0, { isWicket: true })]).countedTotal).toBe(2);
+  });
+
+  it('does not count an over when the target fails', () => {
+    const snapshot = set([
+      makeRule({
+        id: 't',
+        name: 'Over 4 target 10',
+        category: 'TARGET_RULE',
+        scope: 'OVER',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 4 },
+        action: 'MARK_TARGET_FAILED',
+        actionConfig: { target: 10, failAction: 'DO_NOT_COUNT_OVER', successAction: 'COUNT_NORMAL' },
+      }),
+    ]);
+    const failed = evaluateInningsRules(snapshot, [ball(4, 1, 4), ball(4, 2, 4)]);
+    expect(failed.actualTotal).toBe(8);
+    expect(failed.countedTotal).toBe(0);
+    expect(failed.overTargets[0]).toMatchObject({ completed: false });
+    const ok = evaluateInningsRules(snapshot, [ball(4, 1, 6), ball(4, 2, 6)]);
+    expect(ok.countedTotal).toBe(12);
+  });
+
+  it('doubles an over when the target succeeds', () => {
+    const snapshot = set([
+      makeRule({
+        id: 't',
+        name: 'Over 3 target 10 double',
+        category: 'TARGET_RULE',
+        scope: 'OVER',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MARK_TARGET_COMPLETE',
+        actionConfig: { target: 10, successAction: 'MULTIPLY_RUNS', failAction: 'COUNT_NORMAL', multiplier: 2 },
+      }),
+    ]);
+    expect(evaluateInningsRules(snapshot, [ball(3, 1, 6), ball(3, 2, 6)]).countedTotal).toBe(24);
+  });
+
+  it('applies overlapping over then ball rules deterministically', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'over',
+        name: 'Over 3 2x',
+        scope: 'OVER',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+        priority: 1,
+      }),
+      makeRule({
+        id: 'ball',
+        name: 'Ball 2 -2',
+        scope: 'BALL',
+        condition: 'BALL_EQUALS',
+        conditionConfig: { over: 3, ball: 2 },
+        action: 'SUBTRACT_RUNS',
+        actionConfig: { runs: 2 },
+        priority: 10,
+      }),
+    ]);
+    const result = evaluateInningsRules(snapshot, [ball(3, 2, 4)]);
+    expect(result.countedTotal).toBe(6);
+  });
+
+  it('lets higher priority override at the same specificity', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'a',
+        name: '2x',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 1 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+        priority: 1,
+      }),
+      makeRule({
+        id: 'b',
+        name: 'ignore',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 1 },
+        action: 'IGNORE_RUNS',
+        priority: 5,
+      }),
+    ]);
+    expect(evaluateInningsRules(snapshot, [ball(1, 1, 4)]).countedTotal).toBe(0);
+  });
+
+  it('isolates two tournaments with the same ball', () => {
+    const a: RuleSetSnapshot = { enabled: false, version: 1, rules: [] };
+    const b = set([
+      makeRule({
+        id: 'b',
+        name: 'Over 3 2x',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+      }),
+    ]);
+    const balls = [ball(3, 1, 4)];
+    expect(evaluateInningsRules(a, balls).countedTotal).toBe(4);
+    expect(evaluateInningsRules(b, balls).countedTotal).toBe(8);
+  });
+
+  it('keeps a match on its snapshotted version after tournament rules change', () => {
+    const v1 = set(
+      [
+        makeRule({
+          id: 'v1',
+          name: '2x',
+          condition: 'OVER_EQUALS',
+          conditionConfig: { over: 3 },
+          action: 'MULTIPLY_RUNS',
+          actionConfig: { multiplier: 2 },
+        }),
+      ],
+      1,
+    );
+    const v2 = set(
+      [
+        makeRule({
+          id: 'v2',
+          name: '3x',
+          condition: 'OVER_EQUALS',
+          conditionConfig: { over: 3 },
+          action: 'MULTIPLY_RUNS',
+          actionConfig: { multiplier: 3 },
+        }),
+      ],
+      2,
+    );
+    const balls = [ball(3, 1, 4)];
+    expect(evaluateInningsRules(v1, balls).countedTotal).toBe(8);
+    expect(evaluateInningsRules(v2, balls).countedTotal).toBe(12);
+  });
+
+  it('is idempotent for the same snapshot and balls', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'o3',
+        name: '2x',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+      }),
+    ]);
+    const balls = [ball(3, 1, 4), ball(3, 2, 1, { isWicket: true })];
+    expect(evaluateInningsRules(snapshot, balls)).toEqual(evaluateInningsRules(snapshot, balls));
+  });
+
+  it('defaults player-stat and NRR scopes off', () => {
+    const snapshot = set([makeRule({ id: 'x', name: '2x', action: 'MULTIPLY_RUNS', actionConfig: { multiplier: 2 } })]);
+    expect(rulesAffect(snapshot, 'playerStats')).toBe(false);
+    expect(rulesAffect(snapshot, 'nrr')).toBe(false);
+    expect(rulesAffect(snapshot, 'matchResult')).toBe(true);
+  });
+
+  it('previews a ball without mutating inputs', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'o3',
+        name: 'Over 3 is a double-run over',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+      }),
+    ]);
+    const preview = previewTournamentRule({ snapshot, over: 3, ball: 2, actualRuns: 4 });
+    expect(preview).toMatchObject({ actual: 4, counted: 8, multiplier: 2 });
+    expect(preview.reason).toContain('double-run');
+  });
+
+  it('applies duplicate overlapping multipliers in order', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'a',
+        name: '2x',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+        priority: 1,
+      }),
+      makeRule({
+        id: 'b',
+        name: '2x again',
+        condition: 'OVER_EQUALS',
+        conditionConfig: { over: 3 },
+        action: 'MULTIPLY_RUNS',
+        actionConfig: { multiplier: 2 },
+        priority: 2,
+      }),
+    ]);
+    expect(evaluateInningsRules(snapshot, [ball(3, 1, 4)]).countedTotal).toBe(16);
+  });
+
+  it('feeds counted totals into match result and keeps NRR opt-in', () => {
+    const snapshot = set([
+      makeRule({
+        id: 'p',
+        name: 'Wicket penalty',
+        category: 'WICKET_RULE',
+        condition: 'WICKET',
+        action: 'WICKET_PENALTY',
+        actionConfig: { runs: 5 },
+        affects: { ...DEFAULT_RULE_AFFECTS, nrr: true, playerStats: false },
+      }),
+    ]);
+    const counted = evaluateInningsRules(snapshot, [ball(1, 1, 100), ball(1, 2, 0, { isWicket: true })]).countedTotal;
+    expect(counted).toBe(95);
+    expect(rulesAffect(snapshot, 'nrr')).toBe(true);
+    expect(rulesAffect(snapshot, 'playerStats')).toBe(false);
+    const result = computeMatchResult({
+      homeTeamId: 'a',
+      awayTeamId: 'b',
+      maxWickets: 10,
+      innings: [
+        { inningsNumber: 1, battingTeamId: 'b', totalRuns: 98, totalWickets: 3, isComplete: true },
+        { inningsNumber: 2, battingTeamId: 'a', totalRuns: counted, totalWickets: 1, isComplete: true },
+      ],
+    });
+    expect(result.winnerTeamId).toBe('b');
+    expect(result.marginType).toBe('RUNS');
+    expect(result.marginValue).toBe(3);
+  });
+});
