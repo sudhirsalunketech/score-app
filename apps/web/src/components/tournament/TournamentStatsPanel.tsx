@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TournamentDashboard } from '@/types/api';
-import { DashSection, EmptyStats, fmtAvg, PerformerCard, ResponsiveStatTable } from './dash-ui';
+import { DashSection, EmptyStats, fmtAvg, PerformerCard } from './dash-ui';
 
 export function TournamentStatsPanel({
   tournamentId,
@@ -27,56 +27,68 @@ export function TournamentStatsPanel({
   return (
     <div className="pb-10">
       <DashSection title={t('tournaments.batting')}>
-        <ResponsiveStatTable
-          tournamentId={tournamentId}
-          empty={empty}
-          rows={dash.batting}
-          columns={[
-            { key: 'player', label: t('common.players'), render: (r) => r.playerName },
-            { key: 'team', label: t('common.teams'), render: (r) => r.teamName },
-            { key: 'runs', label: t('profile.runs'), numeric: true, render: (r) => r.runs },
-            { key: 'balls', label: t('match.balls'), numeric: true, render: (r) => r.balls },
-            { key: 'avg', label: t('tournaments.average'), numeric: true, render: (r) => fmtAvg(r.average) },
-            { key: 'sr', label: t('tournaments.strikeRate'), numeric: true, render: (r) => r.strikeRate.toFixed(1) },
-            { key: 'hs', label: t('tournaments.highest'), numeric: true, render: (r) => r.highest },
-            { key: 'inn', label: t('tournaments.innings'), numeric: true, render: (r) => r.innings },
-            { key: 'no', label: t('tournaments.notOuts'), numeric: true, render: (r) => r.notOuts },
-            { key: '4s', label: t('tournaments.fours'), numeric: true, render: (r) => r.fours },
-            { key: '6s', label: t('tournaments.sixes'), numeric: true, render: (r) => r.sixes },
-          ]}
-        />
+        {dash.batting.length ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {dash.batting.map((row, i) => (
+              <PerformerCard
+                key={row.playerId}
+                tournamentId={tournamentId}
+                title={`#${i + 1}`}
+                player={row}
+                empty={empty}
+                lines={[
+                  `${t('profile.runs')} ${row.runs} (${row.balls})`,
+                  `${t('tournaments.average')} ${fmtAvg(row.average)} · ${t('tournaments.strikeRate')} ${row.strikeRate.toFixed(1)}`,
+                  `${t('tournaments.highest')} ${row.highest} · 4s ${row.fours} · 6s ${row.sixes} · ${t('tournaments.notOuts')} ${row.notOuts}`,
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyStats title={empty} />
+        )}
       </DashSection>
       <DashSection title={t('tournaments.bowling')}>
-        <ResponsiveStatTable
-          tournamentId={tournamentId}
-          empty={empty}
-          rows={dash.bowling}
-          columns={[
-            { key: 'player', label: t('common.players'), render: (r) => r.playerName },
-            { key: 'team', label: t('common.teams'), render: (r) => r.teamName },
-            { key: 'wkts', label: t('profile.wickets'), numeric: true, render: (r) => r.wickets },
-            { key: 'overs', label: t('tournaments.overs'), numeric: true, render: (r) => r.overs },
-            { key: 'runs', label: t('profile.runs'), numeric: true, render: (r) => r.runs },
-            { key: 'eco', label: t('tournaments.economy'), numeric: true, render: (r) => r.economy.toFixed(2) },
-            { key: 'avg', label: t('tournaments.average'), numeric: true, render: (r) => fmtAvg(r.average) },
-            { key: 'best', label: t('tournaments.bestBowling'), render: (r) => r.best },
-            { key: 'maid', label: t('tournaments.maidens'), numeric: true, render: (r) => r.maidens },
-          ]}
-        />
+        {dash.bowling.length ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {dash.bowling.map((row, i) => (
+              <PerformerCard
+                key={row.playerId}
+                tournamentId={tournamentId}
+                title={`#${i + 1}`}
+                player={row}
+                empty={empty}
+                lines={[
+                  `${t('profile.wickets')} ${row.wickets} · ${row.overs} ${t('tournaments.overs')}`,
+                  `${t('tournaments.economy')} ${row.economy.toFixed(2)} · ${t('tournaments.average')} ${fmtAvg(row.average)}`,
+                  `${t('tournaments.bestBowling')} ${row.best} · ${t('tournaments.maidens')} ${row.maidens}`,
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyStats title={empty} />
+        )}
       </DashSection>
       <DashSection title={t('tournaments.fielding')}>
-        <ResponsiveStatTable
-          tournamentId={tournamentId}
-          empty={empty}
-          rows={dash.fielding}
-          columns={[
-            { key: 'player', label: t('common.players'), render: (r) => r.playerName },
-            { key: 'team', label: t('common.teams'), render: (r) => r.teamName },
-            { key: 'ct', label: t('tournaments.catches'), numeric: true, render: (r) => r.catches },
-            { key: 'ro', label: t('tournaments.runOuts'), numeric: true, render: (r) => r.runOuts },
-            { key: 'st', label: t('tournaments.stumpings'), numeric: true, render: (r) => r.stumpings },
-          ]}
-        />
+        {dash.fielding.length ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {dash.fielding.map((row, i) => (
+              <PerformerCard
+                key={row.playerId}
+                tournamentId={tournamentId}
+                title={`#${i + 1}`}
+                player={row}
+                empty={empty}
+                lines={[
+                  `${t('tournaments.catches')} ${row.catches} · ${t('tournaments.runOuts')} ${row.runOuts} · ${t('tournaments.stumpings')} ${row.stumpings}`,
+                ]}
+              />
+            ))}
+          </div>
+        ) : (
+          <EmptyStats title={empty} />
+        )}
       </DashSection>
     </div>
   );

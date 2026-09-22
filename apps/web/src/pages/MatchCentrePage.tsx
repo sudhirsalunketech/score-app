@@ -934,6 +934,12 @@ export function MatchCentrePage() {
     );
   }
 
+  const dismissedName = snapshot?.batters.find(
+    (b) => b.isOut && (b.playerId === dismissedIds[dismissedIds.length - 1] || outIds.has(b.playerId)),
+  )
+    ? playerName(match, dismissedIds[dismissedIds.length - 1] ?? '')
+    : null;
+
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-[1100px] flex-col overflow-x-hidden bg-bg">
       <ScoringHeader
@@ -1140,40 +1146,37 @@ export function MatchCentrePage() {
               onStart={() => setSetupConfirmed(true)}
             />
           ) : null}
-          {chooseNew && !scoringLocked ? (
-            <WicketReplacementPanel
-              dismissedName={
-                snapshot?.batters.find((b) => b.isOut && (b.playerId === dismissedIds[dismissedIds.length - 1] || outIds.has(b.playerId)))
-                  ? playerName(match, dismissedIds[dismissedIds.length - 1] ?? '')
-                  : null
-              }
-              onSelect={() => setPicker(chooseNew)}
-            />
+          {chooseNew && !scoringLocked && !chooseBowler ? (
+            <WicketReplacementPanel dismissedName={dismissedName} onSelect={() => setPicker(chooseNew)} />
           ) : null}
-          {!ready && !scoringLocked && !showSetup && !chooseNew ? (
+          <BottomSheet
+            open={Boolean(chooseBowler && !scoringLocked)}
+            onClose={() => undefined}
+            title={t('match.selectPlayers')}
+          >
+            <p className="mb-3 text-sm font-semibold text-white/90">
+              {chooseNew
+                ? [dismissedName, t('match.selectNewBatsman')].filter(Boolean).join(' — ')
+                : t('match.overComplete')}
+            </p>
+            <div className="flex gap-2">
+              {chooseNew ? (
+                <Button className="flex-1" variant="outline" onClick={() => setPicker(chooseNew)}>
+                  {t('match.selectBatsman')}
+                </Button>
+              ) : null}
+              <Button className="flex-1" variant="outline" onClick={() => setPicker('bowler')}>
+                {t('match.selectBowler')}
+              </Button>
+            </div>
+          </BottomSheet>
+          {!ready && !scoringLocked && !showSetup && !chooseNew && !chooseBowler ? (
             <button
               type="button"
-              className={cn(
-                'mx-[var(--gutter)] my-3 min-h-touch font-bold',
-                chooseBowler
-                  ? 'rounded-pill bg-scoring text-scoring-on'
-                  : 'rounded-lg bg-primary text-on-dark',
-              )}
-              onClick={() =>
-                setPicker(
-                  chooseBowler || !bowlerId
-                    ? 'bowler'
-                    : !strikerId
-                      ? 'striker'
-                      : !nonStrikerId
-                        ? 'nonStriker'
-                        : 'bowler',
-                )
-              }
+              className="mx-[var(--gutter)] my-3 min-h-touch rounded-lg bg-primary font-bold text-on-dark"
+              onClick={() => setPicker(!bowlerId ? 'bowler' : !strikerId ? 'striker' : !nonStrikerId ? 'nonStriker' : 'bowler')}
             >
-              {chooseBowler
-                ? `${t('match.overComplete')} · ${t('match.chooseNewBowler')}`
-                : t('match.selectPlayers')}
+              {t('match.selectPlayers')}
             </button>
           ) : null}
           <div className="mt-auto">
@@ -1646,7 +1649,7 @@ export function MatchCentrePage() {
       <BottomSheet
         open={Boolean(match && innings && match.status === 'INNINGS_BREAK' && ackedInningsBreakId !== innings.id)}
         onClose={() => undefined}
-        title={t('scoring.inningsCompleteTitle')}
+        title={t('scoring.moreMenu.endInnings')}
       >
         <p className="text-sm font-semibold">{t('scoring.confirmEndInnings')}</p>
         <p className="mt-2 text-sm text-text-secondary">

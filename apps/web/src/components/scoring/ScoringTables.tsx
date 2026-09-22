@@ -75,54 +75,67 @@ export function ScoringTables({
             <span className={COL}>{t('scoring.sixes')}</span>
             <span className={COL}>{t('scoring.sr')}</span>
           </div>
-          {batterRows.map(({ id, which }, index) => {
-            const waiting = !id && Boolean(which === 'striker' ? nonStrikerId : strikerId);
-            if (!id) {
-              if (!waiting) return null;
+          {!strikerId && !nonStrikerId ? (
+            <button
+              type="button"
+              className={cn(
+                'm-2 inline-flex min-h-touch items-center rounded-pill bg-scoring px-3 py-0.5 text-sm font-semibold text-scoring-on',
+                FOCUS,
+              )}
+              onClick={() => onChangeBatter('striker')}
+            >
+              {t('match.chooseNewBatsman')}
+            </button>
+          ) : (
+            batterRows.map(({ id, which }, index) => {
+              const waiting = !id && Boolean(which === 'striker' ? nonStrikerId : strikerId);
+              if (!id) {
+                if (!waiting) return null;
+                return (
+                  <button
+                    key={which}
+                    type="button"
+                    className={cn(
+                      'm-2 inline-flex min-h-touch items-center rounded-pill bg-scoring px-3 py-0.5 text-sm font-semibold text-scoring-on',
+                      FOCUS,
+                    )}
+                    onClick={() => onChangeBatter(which)}
+                  >
+                    {t('match.chooseNewBatsman')}
+                  </button>
+                );
+              }
+              const c = cards.find((b) => b.playerId === id);
+              const isStriker = which === 'striker';
               return (
-                <button
-                  key={which}
-                  type="button"
-                  className={cn(
-                    'm-2 inline-flex min-h-touch items-center rounded-pill bg-scoring px-3 py-0.5 text-sm font-semibold text-scoring-on',
-                    FOCUS,
-                  )}
-                  onClick={() => onChangeBatter(which)}
+                <div
+                  key={id}
+                  className={cn(GRID, BAT, 'px-2 py-1', index > 0 && 'border-t border-border')}
                 >
-                  {t('match.chooseNewBatsman')}
-                </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      'inline-flex min-h-touch min-w-0 max-w-full items-center rounded-md px-2 text-start text-sm font-semibold',
+                      FOCUS,
+                      isStriker ? 'bg-scoring text-scoring-on' : 'text-text',
+                    )}
+                    aria-current={isStriker ? 'true' : undefined}
+                    onClick={() => onChangeBatter(which)}
+                  >
+                    <span className="truncate">
+                      {playerName(match, id)}
+                      {isStriker ? ' *' : ''}
+                    </span>
+                  </button>
+                  <span className={cn(NUM, 'font-bold')}>{c?.runs ?? 0}</span>
+                  <span className={NUM}>{c?.balls ?? 0}</span>
+                  <span className={NUM}>{c?.fours ?? 0}</span>
+                  <span className={NUM}>{c?.sixes ?? 0}</span>
+                  <span className={NUM}>{strikeRate(c?.runs ?? 0, c?.balls ?? 0)}</span>
+                </div>
               );
-            }
-            const c = cards.find((b) => b.playerId === id);
-            const isStriker = which === 'striker';
-            return (
-              <div
-                key={id}
-                className={cn(GRID, BAT, 'px-2 py-1', index > 0 && 'border-t border-border')}
-              >
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex min-h-touch min-w-0 max-w-full items-center rounded-md px-2 text-start text-sm font-semibold',
-                    FOCUS,
-                    isStriker ? 'bg-scoring text-scoring-on' : 'text-text',
-                  )}
-                  aria-current={isStriker ? 'true' : undefined}
-                  onClick={() => onChangeBatter(which)}
-                >
-                  <span className="truncate">
-                    {playerName(match, id)}
-                    {isStriker ? ' *' : ''}
-                  </span>
-                </button>
-                <span className={cn(NUM, 'font-bold')}>{c?.runs ?? 0}</span>
-                <span className={NUM}>{c?.balls ?? 0}</span>
-                <span className={NUM}>{c?.fours ?? 0}</span>
-                <span className={NUM}>{c?.sixes ?? 0}</span>
-                <span className={NUM}>{strikeRate(c?.runs ?? 0, c?.balls ?? 0)}</span>
-              </div>
-            );
-          })}
+            })
+          )}
         </section>
 
         <section className="overflow-hidden rounded-xl border border-border bg-bg">

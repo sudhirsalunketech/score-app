@@ -1,0 +1,7 @@
+{
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @crickscore/shared build && pnpm --filter @crickscore/web build",
+  "outputDirectory": "apps/web/dist",
+  "framework": "vite",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
