@@ -4,9 +4,11 @@ services:
     runtime: node
     plan: free
     region: singapore
-    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @crickscore/shared build && pnpm run db:generate && pnpm --filter @crickscore/api build
+    buildCommand: corepack enable && corepack prepare pnpm@9.15.0 --activate && pnpm install --frozen-lockfile && pnpm --filter @crickscore/shared build && pnpm run db:generate && pnpm --filter @crickscore/api build
     startCommand: pnpm run db:migrate && pnpm --filter @crickscore/api start
     envVars:
+      - key: NODE_VERSION
+        value: "22"
       - key: NODE_ENV
         value: production
       - key: APP_ENV
