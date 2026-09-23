@@ -9,7 +9,6 @@ coverage
 .turbo
 apps/web/dist
 apps/api/dist
-uploads
 apps/api/uploads
 packages/shared/dist
 .prisma
