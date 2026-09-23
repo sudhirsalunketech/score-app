@@ -37,13 +37,13 @@ export function SelectMatchTypeSheet({
             if (!groups.length) onNoGroups();
           }}
         >
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary-light text-primary-dark">
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-primary text-white">
             <IconTrophy size={22} />
           </span>
           <span className="text-sm font-bold">{t('match.pointsTable')}</span>
         </button>
         <div className="flex flex-col items-center gap-2 rounded-xl border border-border p-4">
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-danger/10 text-danger">
+          <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-danger text-white">
             <IconFlag size={22} />
           </span>
           <span className="text-sm font-bold">{t('match.otherMatches')}</span>
@@ -63,7 +63,7 @@ export function SelectMatchTypeSheet({
                 onClick={() => onSelectGroup(g)}
               >
                 <span className="flex items-center gap-3">
-                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary-light text-sm font-bold text-primary-dark">
+                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
                     {g.name.trim().slice(0, 1) || '#'}
                   </span>
                   <span className="font-semibold uppercase">{g.name}</span>
@@ -91,7 +91,7 @@ export function SelectMatchTypeSheet({
               onClick={() => onSelectLabel(label)}
             >
               <span className="flex items-center gap-3">
-                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border-2 border-danger" aria-hidden />
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-danger" aria-hidden />
                 <span className="font-semibold">{label}</span>
               </span>
               <IconChevron size={16} className="text-text-secondary" />
